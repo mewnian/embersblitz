@@ -1,0 +1,15 @@
+# Core RL packages
+gymnasium[classic_control]
+torch
+torchvision
+torchaudio
+
+# Scientific computing
+numpy
+matplotlib
+
+# Development
+jupyter
+tensorboard
+tqdm
+copier
