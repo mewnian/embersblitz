@@ -10,10 +10,10 @@ Basic setup for reinforcement learning development with Gymnasium and PyTorch.
 
 ```bash
 # Create conda environment
-conda create -n rl_env -y
+conda create -n embers_env -y
 
 # Activate environment
-conda activate rl_env
+conda activate embers_env
 
 # Install packages
 pip install -r requirements.txt
@@ -30,7 +30,7 @@ python -c "import gymnasium as gym; import torch; print('✅ Setup complete!')"
 Remember to activate your environment before working:
 
 ```bash
-conda activate rl_env
+conda activate embers_env
 ```
 
 ## What's Included
