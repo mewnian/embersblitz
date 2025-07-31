@@ -4,13 +4,14 @@ import embers_env
 from agents.q_agent import QAgent
 from tqdm import tqdm
 import time
+import matplotlib.pyplot as plt
 
 env = gym.make(
     'embers_env/ContinuousWorld-v0', 
     width=1000, height=1000,
     window_size=(1000, 1000),
-    episode_step_limit=200,
-    render_mode='human'
+    episode_step_limit=5000,
+    render_mode='human',
 )
 
 obstacles = [
@@ -49,46 +50,55 @@ targets = [
 env.unwrapped.add_obstacles(obstacles)
 env.unwrapped.add_targets(targets)
 
-n_episodes = 50
+n_episodes = 500
 
 episode_over = False
 total_reward = 0
 
-agent = QAgent(env, epsilon_decay=0.025)
+agent = QAgent(env, epsilon_decay=0.005, final_epsilon=0.01, discount_factor=0.95)
 
 env.unwrapped.set_agent(250, 250)
 obs, info = env.reset()
 
 # wait for 5 seconds before closing
-time.sleep(5)
+errors = []
 
-# for episode in tqdm(range(n_episodes), desc="Training episodes"):
-#     cnt = 0
-#     obs, info = env.reset()
-#     episode_over = False
-#     total_reward = 0
+for episode in tqdm(range(n_episodes), desc="Training episodes"):
+    cnt = 0
+    env.unwrapped.set_agent(250, 250)
+    obs, info = env.reset()
+    episode_over = False
+    total_reward = 0
 
-#     while not episode_over:
-#         action = agent.get_action(obs)
-#         # if action["type"] == 0:
-#         #     action["angle"] = obs.get("agent_angle")  # Use current agent angle if available
-#         next_obs, reward, terminated, truncated, info = env.step(action)
+    while not episode_over:
+        action = agent.get_action(obs)
+        # if action["type"] == 0:
+        #     action["angle"] = obs.get("agent_angle")  # Use current agent angle if available
+        next_obs, reward, terminated, truncated, info = env.step(action)
 
-#         agent.update(
-#             obs=obs,
-#             action=action,
-#             reward=reward,
-#             terminated=terminated,
-#             next_obs=next_obs
-#         )
+        agent.update(
+            obs=obs,
+            action=action,
+            reward=reward,
+            terminated=terminated,
+            next_obs=next_obs
+        )
 
-#         total_reward += reward
-#         episode_over = terminated or truncated
-#         obs = next_obs
-#         cnt += 1
-#         print(f"Step {cnt}: Action: {action}, Reward: {reward}, Total Reward: {total_reward}")
-
-#     agent.decay_epsilon()
-#     print(f"Episode {episode + 1} finished! Total reward: {total_reward}, Epsilon: {agent.epsilon}")
+        total_reward += reward
+        episode_over = terminated or truncated
+        obs = next_obs
+        cnt += 1
+        # print(f"Step {cnt+1}: Info {info}")
+        
+    errors.append(np.mean(np.abs(agent.training_error)))
+    agent.reset_error()
+    agent.decay_epsilon()
+    print(f"Episode {episode + 1} finished! Total reward: {total_reward}, Epsilon: {agent.epsilon}")
 
 env.close()
+# Plotting the training error
+plt.plot(errors)
+plt.xlabel('Episode')
+plt.ylabel('Mean training error')
+plt.title('Training error over episodes')
+plt.show()

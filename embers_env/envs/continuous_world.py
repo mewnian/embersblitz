@@ -32,7 +32,7 @@ class Rectangle:
 class ContinuousWorldEnv(gym.Env):
     metadata = {
         "render_modes": ["human", "rgb_array"],
-        "render_fps": 4,
+        "render_fps": 240,
     }
 
     def __init__(self, 
@@ -57,7 +57,6 @@ class ContinuousWorldEnv(gym.Env):
         # initialize position
         self._agent_pos = None
         self._agent_size = min(width, height) / 50.0
-        self._agent_accel = 0.5
         self._agent_angle = 0
         self._agent_direction = np.array([1.0, 0.0])
         self._targets = targets or []
@@ -214,7 +213,7 @@ class ContinuousWorldEnv(gym.Env):
         """
         if not self._targets:
             return float('inf')
-        distances = [np.linalg.norm(position.center - target.center) for target in self._targets]
+        distances = [np.linalg.norm(position.center - target.center, ord=1) for target in self._targets]
         return min(distances)
     
     # def _resolve_collision(self, current_pos, movement):
@@ -296,6 +295,7 @@ class ContinuousWorldEnv(gym.Env):
         """
         self._episode_steps += 1
         reward = 0
+        terminated = False
         if action == 0: # Move forward
             new_center = np.clip(
                 self._agent_pos.center + self._agent_direction,
@@ -307,23 +307,24 @@ class ContinuousWorldEnv(gym.Env):
                 old_distance = self.distance_to_nearest_target(self._agent_pos)
                 self._agent_pos.set_center(new_center)
                 new_distance = self.distance_to_nearest_target(self._agent_pos)
-                reward = (old_distance - new_distance) / max(self.width, self.height) - 1  # Reward for moving closer to target
+                reward = (old_distance - new_distance) / (self.width + self.height)  # Reward for moving closer to target
             else:
                 # resolve collision by sliding along walls and punish
                 # new_center = self._resolve_collision(self._agent_pos.center, self._agent_direction)
                 # self._agent_pos.set_center(new_center)
-                reward = -max(self.width, self.height) # Penalty for collision
+                reward = -self.width * self.height # Penalty for collision
+                terminated = True
         elif action == 1: # Turns left by 15 degrees
             self._agent_angle = (self._agent_angle + 15) % 360
             self._agent_direction = np.array([np.cos(np.pi * self._agent_angle / 180.0), np.sin(np.pi * self._agent_angle / 180.0)])
-            reward = -10
+            reward = -1
         elif action == 2: # Turns right by 15 degrees
             self._agent_angle = (self._agent_angle + 360 - 15) % 360
             self._agent_direction = np.array([np.cos(np.pi * self._agent_angle / 180.0), np.sin(np.pi * self._agent_angle / 180.0)])
-            reward = -10
+            reward = -1
         # clip the agent's position to stay within bounds
         # check if agent reaches the target
-        terminated = self.is_overlapping_with_target(self._agent_pos)
+        terminated = terminated or self.is_overlapping_with_target(self._agent_pos)
         if terminated: reward = max(self.width, self.height)  # reward for reaching the target
         truncated = self.episode_step_limit is not None and self._episode_steps >= self.episode_step_limit 
         observation = self._get_obs()

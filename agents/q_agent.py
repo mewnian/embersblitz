@@ -21,7 +21,6 @@ class QAgent:
         self.q_values = defaultdict(
             lambda: np.zeros((env.action_space.n))
         )
-        print(env.action_space.n)
         self.training_error = []
     
     def get_action(self, obs):
@@ -47,13 +46,17 @@ class QAgent:
     
     def hashed_obs(self, obs):
         """Convert observation to a hashable type for use in Q-table."""
-        agent, target = obs["agent"], obs["target"]
-        return tuple(np.concatenate((agent, target)))
+        agent, angle = obs["agent"], obs["agent_angle"]
+        return tuple(np.concatenate((agent, [angle])).astype(np.float32))
     
     def action_index(self, action):
         return action
         # act_type, act_angle = int(action["type"]), int(action["angle"])
         # return (act_type, act_angle)
+
+    def reset_error(self):
+        """Reset the training error list."""
+        self.training_error = []
     
     def update(
         self, 
