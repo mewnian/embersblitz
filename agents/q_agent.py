@@ -18,9 +18,7 @@ class QAgent:
         self.epsilon_decay = epsilon_decay
         self.final_epsilon = final_epsilon
         self.discount_factor = discount_factor
-        self.q_values = defaultdict(
-            lambda: np.zeros((env.action_space.n))
-        )
+        self.q_values = defaultdict(lambda: np.zeros((env.action_space.n)))
         self.training_error = []
     
     def get_action(self, obs):
@@ -28,26 +26,16 @@ class QAgent:
         if np.random.random() < self.epsilon:
             # explore: random action
             return self.env.action_space.sample()
-            # action = self.env.action_space.sample()
-            # return {
-            #     "type": action["type"],
-            #     "angle": action["angle"] if action["type"] == 1 else obs.get("agent_angle")
-            # }
         else:
             # exploit: select greedy action (best q-value)
-            # best_index = np.argmax(self.q_values[self.hashed_obs(obs)], keepdims=True)
-            # best_act = np.unravel_index(best_index, self.q_values[self.hashed_obs(obs)].shape)
-            # return {
-            #     "type": best_act[0].item(0),
-            #     "angle": best_act[1].item(0) if best_act[0].item(0) == 1 else obs.get("agent_angle")
-            # }
             return np.argmax(self.q_values[self.hashed_obs(obs)])
         
     
     def hashed_obs(self, obs):
         """Convert observation to a hashable type for use in Q-table."""
-        agent, angle = obs["agent"], obs["agent_angle"]
-        return tuple(np.concatenate((agent, [angle])).astype(np.float32))
+        hashed = [obs["direction"]]
+        hashed.extend(tuple(obs["view"].flatten()))
+        return tuple(hashed)
     
     def action_index(self, action):
         return action

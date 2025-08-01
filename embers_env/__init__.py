@@ -9,3 +9,8 @@ register(
     id="embers_env/ContinuousWorld-v0",
     entry_point="embers_env.envs:ContinuousWorldEnv",
 )
+
+register(
+    id="embers_env/PartialObservationWorld-v0",
+    entry_point="embers_env.envs:PartialObservationWorldEnv",
+)

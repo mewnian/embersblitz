@@ -7,12 +7,18 @@ import time
 import matplotlib.pyplot as plt
 
 env = gym.make(
-    'embers_env/ContinuousWorld-v0', 
+    'embers_env/PartialObservationWorld-v0', 
     width=1000, height=1000,
+    agent_size=10,
+    view_size=100,
     window_size=(1000, 1000),
     episode_step_limit=5000,
     render_mode='human',
 )
+
+targets = [
+    (0, 920, 1000, 1000),
+]
 
 obstacles = [
     (45, 880, 95, 940), # pillar one
@@ -42,22 +48,17 @@ obstacles = [
     (740, 265, 780, 525),
 ]
 
-targets = [
-    (0, 920, 1000, 1000),
-    
-]
-
-env.unwrapped.add_obstacles(obstacles)
 env.unwrapped.add_targets(targets)
+env.unwrapped.add_obstacles(obstacles)
+env.unwrapped.set_agent(250, 250)
 
 n_episodes = 500
 
 episode_over = False
 total_reward = 0
 
-agent = QAgent(env, epsilon_decay=0.005, final_epsilon=0.01, discount_factor=0.95)
+agent = QAgent(env, epsilon_decay=0.002, final_epsilon=0.05, discount_factor=0.95)
 
-env.unwrapped.set_agent(250, 250)
 obs, info = env.reset()
 
 # wait for 5 seconds before closing
@@ -65,8 +66,8 @@ errors = []
 
 for episode in tqdm(range(n_episodes), desc="Training episodes"):
     cnt = 0
-    env.unwrapped.set_agent(250, 250)
     obs, info = env.reset()
+    env.unwrapped.set_agent(250, 250)
     episode_over = False
     total_reward = 0
 
@@ -96,9 +97,3 @@ for episode in tqdm(range(n_episodes), desc="Training episodes"):
     print(f"Episode {episode + 1} finished! Total reward: {total_reward}, Epsilon: {agent.epsilon}")
 
 env.close()
-# Plotting the training error
-plt.plot(errors)
-plt.xlabel('Episode')
-plt.ylabel('Mean training error')
-plt.title('Training error over episodes')
-plt.show()

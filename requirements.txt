@@ -1,5 +1,6 @@
 # Core RL packages
 gymnasium[classic_control]
+minigrid
 torch
 torchvision
 torchaudio

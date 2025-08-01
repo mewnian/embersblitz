@@ -7,6 +7,21 @@ import pygame
 import gymnasium as gym
 from gymnasium import spaces
 
+class Cell(Enum):
+    EMPTY = 0
+    TARGET = 1
+    OBSTACLE = -1
+
+class Directions(Enum):
+    NORTH = 0
+    # NORTHEAST = 1
+    EAST = 1
+    # SOUTHEAST = 3
+    SOUTH = 2
+    # SOUTHWEST = 5
+    WEST = 3
+    # NORTHWEST = 7
+
 class Rectangle:
     def __init__(self, center: np.ndarray = np.array([-1, -1]), shape: np.ndarray = np.array([0, 0])):
         self.center = center
@@ -27,25 +42,30 @@ class Rectangle:
     def get_area(self):
         return np.prod(self.shape)
 
-# Discrete room plan environment
+# Partially observable room plan environment
+# Agent will have a limited 10x10 view
 # Each block is either an empty space, a wall or an exit
-class ContinuousWorldEnv(gym.Env):
+class PartialObservationWorldEnv(gym.Env):
     metadata = {
         "render_modes": ["human", "rgb_array"],
         "render_fps": 240,
     }
 
     def __init__(self, 
-        width: float = 600, height: float = 400, 
+        width: int = 512, height: int = 512, 
+        view_size: int = 20,
+        agent_size: int = 10,
         targets: Optional[list] = None,
         obstacles: Optional[list] = None,
         episode_step_limit: Optional[int] = None,
         window_size: tuple = (512, 512), render_mode = None
     ):
-        super(ContinuousWorldEnv, self).__init__()
+        super(PartialObservationWorldEnv, self).__init__()
         # size of the room
         self.width = width
         self.height = height
+        self.view_size = view_size # (window will have length (2*view + 1))
+        self._map = np.zeros((self.width, self.height), dtype=np.int32)
 
         # size of the pygame window
         self.window_size = window_size
@@ -55,31 +75,39 @@ class ContinuousWorldEnv(gym.Env):
         self._episode_steps = 0
 
         # initialize position
-        self._agent_pos = None
-        self._agent_size = min(width, height) / 50.0
-        self._agent_angle = 0
-        self._agent_direction = np.array([1.0, 0.0])
+        self._agent_pos = np.array([0, 0], dtype=np.int32)
+        self._agent_size = agent_size
+        self._agent_direction = 0
         self._targets = targets or []
         self._obstacles = obstacles or []
 
         # observation space (2D coordinates)
         self.observation_space = gym.spaces.Dict({
-            "agent": gym.spaces.Box(
-                low=np.array([0,0]), high=np.array([self.width, self.height]), dtype=np.float32
+            "view": spaces.Box(
+                low=-1, high=1, 
+                shape=(),
+                dtype=np.int8,
             ),
-            "agent_angle": gym.spaces.Discrete(360),  # angle in degrees (0-359)
-            "targets": gym.spaces.Sequence(
-                gym.spaces.Box(low=np.array([0,0]), high=np.array([self.width, self.height]), dtype=np.float32)
-            ),
-            "obstacles": gym.spaces.Sequence(
-                gym.spaces.Box(low=np.array([0,0]), high=np.array([self.width, self.height]), dtype=np.float32)
-            )
+            "direction": spaces.Discrete(8)
         })
 
         # define action space
         # two choices: move forward or change direction
-        self.action_space = gym.spaces.Discrete(3)
+
+        # define action space
+        self.action_space = spaces.Discrete(3) # three actions
         # specify action space by direction
+        self._named_direction = {
+            # rewrite the action and match the comment to the direction of the action
+            Directions.NORTH.value: np.array([0, 1], dtype=np.int8),   # up (0)
+            # Directions.NORTHEAST.value: np.array([1, 1], dtype=np.int8), # right-up (45)
+            Directions.EAST.value: np.array([1, 0], dtype=np.int8),    # right (90)
+            # Directions.SOUTHEAST.value: np.array([1, -1], dtype=np.int8), # right-down (135)
+            Directions.SOUTH.value: np.array([0, -1], dtype=np.int8),  # down (180)
+            # Directions.SOUTHWEST.value: np.array([-1, -1], dtype=np.int8), # left-down (225)
+            Directions.WEST.value: np.array([-1, 0], dtype=np.int8),   # left (270)
+            # Directions.NORTHWEST.value: np.array([-1, 1], dtype=np.int8), # left-up (315)
+        }
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
@@ -100,12 +128,13 @@ class ContinuousWorldEnv(gym.Env):
         Returns:
             dict: Observation with agent and target positions
         """
-        
+        x, y = self._agent_pos
         return {
-            "agent": np.array(self._agent_pos),
-            "agent_angle": self._agent_angle,
-            "targets": np.array([np.array(target) for target in self._targets]),
-            "obstacles": np.array([np.array(obstacle) for obstacle in self._obstacles])
+            "view": self._map[
+                (x - self.view_size):(x + self.view_size),
+                (y - self.view_size):(y + self.view_size)
+            ],
+            "direction": self._agent_direction
         }
     
     def _get_info(self):
@@ -127,21 +156,16 @@ class ContinuousWorldEnv(gym.Env):
             xmax (float): Maximum x-coordinate of the agent rectangle.
             ymax (float): Maximum y-coordinate of the agent rectangle.
         """
-        rect = Rectangle(np.array([center_x, center_y]), np.array([self._agent_size, self._agent_size]))
-        if self.is_overlapping_with_target(rect) or self.is_colliding_with_obstacles(rect):
-            return False
-        self._agent_pos = rect
+        self._agent_pos = np.array([center_x, center_y], dtype=np.int32)
         return True
     
-    def add_target(self, target: tuple):
+    def add_target(self, xmin, ymin, xmax, ymax):
         """Add a target to the environment.
 
         Args:
-            target (tuple): The rectangle representing the target, in order of (xmin, ymin, xmax, ymax).
+            target (tuple): The rectangle representing the target, in order of (xmin, ymin, xmax, ymax). (inclusive)
         """
-        center = np.array([(target[0] + target[2]) / 2, (target[1] + target[3]) / 2])
-        shape = np.array([target[2] - target[0], target[3] - target[1]])
-        self._targets.append(Rectangle(center, shape))
+        self._map[xmin:xmax, ymin:ymax] = Cell.TARGET.value
         return True
     
     def add_targets(self, targets: list):
@@ -150,19 +174,20 @@ class ContinuousWorldEnv(gym.Env):
         Args:
             targets (list): List of Rectangle instances representing targets.
         """
+        added = 0
         for target in targets:
-            self.add_target(target)
-        return True
+            if self.add_target(*target):
+                added += 1
+                self._targets.append(np.array(target))
+        return added
     
-    def add_obstacle(self, obstacle: tuple):
+    def add_obstacle(self, xmin, ymin, xmax, ymax):
         """Add an obstacle to the environment.
 
         Args:
             obstacle (tuple): The rectangle representing the obstacle, in order of (xmin, ymin, xmax, ymax).
         """
-        center = np.array([(obstacle[0] + obstacle[2]) / 2, (obstacle[1] + obstacle[3]) / 2])
-        shape = np.array([obstacle[2] - obstacle[0], obstacle[3] - obstacle[1]])
-        self._obstacles.append(Rectangle(center, shape))
+        self._map[xmin:xmax, ymin:ymax] = Cell.OBSTACLE.value
         return True
     
     def add_obstacles(self, obstacles: list):
@@ -171,37 +196,42 @@ class ContinuousWorldEnv(gym.Env):
         Args:
             obstacles (list): List of Rectangle instances representing obstacles.
         """
+        added = 0
         for obstacle in obstacles:
-            self.add_obstacle(obstacle)
-        return True
+            if self.add_obstacle(*obstacle):
+                added += 1
+                self._obstacles.append(np.array(obstacle))
+        return added
     
-    def is_colliding_with_obstacles(self, position: Rectangle) -> bool:
+    def is_colliding_with_obstacles(self, position: np.ndarray) -> bool:
         """Check if the given position collides with any obstacles.
 
         Args:
-            position (Rectangle): The rectangle representing the position to check.
+            position (ndarray): The rectangle representing the position to check.
 
         Returns:
             bool: True if there is a collision, False otherwise.
         """
-        for obstacle in self._obstacles:
-            if position.is_overlapping(obstacle):
-                return True
-        return False
+        x, y = position
+        return np.any(self._map[
+            (x - self._agent_size):(x + self._agent_size),
+            (y - self._agent_size):(y + self._agent_size),
+        ] == Cell.OBSTACLE.value)
     
-    def is_overlapping_with_target(self, position: Rectangle) -> bool:
+    def is_overlapping_with_target(self, position: np.ndarray) -> bool:
         """Check if the given position overlaps with any target.
 
         Args:
-            position (Rectangle): The rectangle representing the position to check.
+            position (ndarray): The rectangle representing the position to check.
 
         Returns:
             bool: True if there is an overlap with a target, False otherwise.
         """
-        for target in self._targets:
-            if position.is_overlapping(target):
-                return True
-        return False
+        x, y = position
+        return np.any(self._map[
+            (x - self._agent_size):(x + self._agent_size),
+            (y - self._agent_size):(y + self._agent_size),
+        ] == Cell.TARGET.value)
     
     def distance_to_nearest_target(self, position: Rectangle) -> float:
         """Calculate the distance to the nearest target from the given position.
@@ -217,43 +247,6 @@ class ContinuousWorldEnv(gym.Env):
         distances = [np.linalg.norm(position.center - target.center, ord=1) for target in self._targets]
         return min(distances)
     
-    # def _resolve_collision(self, current_pos, movement):
-    #     """Resolve collision with sliding along walls.
-        
-    #     Args:
-    #         current_pos (np.ndarray): Current agent position
-    #         movement (np.ndarray): Desired movement vector
-            
-    #     Returns:
-    #         np.ndarray: Final position after collision resolution
-    #     """
-    #     # Try full movement first
-    #     new_pos = np.clip(
-    #         current_pos + movement,
-    #         np.array([self._agent_size / 2, self._agent_size / 2]),
-    #         np.array([self.width - self._agent_size / 2, self.height - self._agent_size / 2])
-    #     )
-        
-    #     test_rect = Rectangle(new_pos, self._agent_pos.shape)
-    #     if not self.is_colliding_with_obstacles(test_rect):
-    #         return new_pos
-        
-    #     # Try sliding along X and Y axes separately
-    #     for axis in [0, 1]:  # Try X then Y
-    #         slide_movement = movement.copy()
-    #         slide_movement[1-axis] = 0  # Zero out the other axis
-            
-    #         slide_pos = np.clip(
-    #             current_pos + slide_movement,
-    #             np.array([self._agent_size / 2, self._agent_size / 2]),
-    #             np.array([self.width - self._agent_size / 2, self.height - self._agent_size / 2])
-    #         )
-            
-    #         if not self.is_colliding_with_obstacles(Rectangle(slide_pos, self._agent_pos.shape)):
-    #             return slide_pos
-        
-    #     return current_pos  # No movement possible
-    
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None):
         """Reset the environment to start a new episode.
         
@@ -265,16 +258,6 @@ class ContinuousWorldEnv(gym.Env):
             tuple: (observation, info) Initial observation and info
         """
         super().reset(seed=seed)
-
-        # Randomly place agent
-        if self._agent_pos is None:
-            while True:
-                # Ensure agent is not overlapping with target or obstacles
-                center = self.np_random.uniform(
-                    low=[self._agent_size / 2, self._agent_size / 2], 
-                    high=[self.width - self._agent_size / 2, self.height - self._agent_size / 2]
-                )
-                if self.set_agent(center[0], center[1]): break
         
         observation = self._get_obs()
         info = self._get_info()
@@ -295,39 +278,25 @@ class ContinuousWorldEnv(gym.Env):
             tuple: (observation, reward, terminated, truncated, info)
         """
         self._episode_steps += 1
-        reward = 0
+        reward = -1
         terminated = False
         if action == 0: # Move forward
-            new_center = np.clip(
-                self._agent_pos.center + self._agent_direction,
-                np.array([self._agent_size / 2, self._agent_size / 2]),
-                np.array([self.width - self._agent_size / 2, self.height - self._agent_size / 2])
-            )
+            new_pos = self._agent_pos + self._named_direction[self._agent_direction]
             # if agent is not colliding with obstacles, move forward
-            if not self.is_colliding_with_obstacles(Rectangle(new_center, self._agent_pos.shape)):
-                old_distance = self.distance_to_nearest_target(self._agent_pos)
-                self._agent_pos.set_center(new_center)
-                new_distance = self.distance_to_nearest_target(self._agent_pos)
-                reward = (old_distance - new_distance) / (self.width + self.height)  # Reward for moving closer to target
-            else:
-                # resolve collision by sliding along walls and punish
-                # new_center = self._resolve_collision(self._agent_pos.center, self._agent_direction)
-                # self._agent_pos.set_center(new_center)
-                reward = -self.width * self.height # Penalty for collision
+            if self.is_colliding_with_obstacles(new_pos):
+                reward = -self.episode_step_limit
                 terminated = True
-        elif action == 1: # Turns left by 15 degrees
-            self._agent_angle = (self._agent_angle + 15) % 360
-            self._agent_direction = np.array([np.cos(np.pi * self._agent_angle / 180.0), np.sin(np.pi * self._agent_angle / 180.0)])
-            reward = -1
-        elif action == 2: # Turns right by 15 degrees
-            self._agent_angle = (self._agent_angle + 360 - 15) % 360
-            self._agent_direction = np.array([np.cos(np.pi * self._agent_angle / 180.0), np.sin(np.pi * self._agent_angle / 180.0)])
-            reward = -1
-        # clip the agent's position to stay within bounds
-        # check if agent reaches the target
-        terminated = terminated or self.is_overlapping_with_target(self._agent_pos)
-        if terminated: reward = max(self.width, self.height)  # reward for reaching the target
-        truncated = self.episode_step_limit is not None and self._episode_steps >= self.episode_step_limit 
+            else:
+                self._agent_pos = new_pos
+                if self.is_overlapping_with_target(self._agent_pos):
+                    reward = self.episode_step_limit / 2
+                    terminated = True
+        elif action == 1: # Turns right by 45 degrees
+            self._agent_direction = (self._agent_direction + 1) % len(Directions)
+        elif action == 2: # Turns left by 45 degrees
+            self._agent_direction = (self._agent_direction + len(Directions) - 1) % len(Directions)
+        terminated = terminated or (self._episode_steps >= self.episode_step_limit)
+        truncated = False
         observation = self._get_obs()
         info = self._get_info()
 
@@ -355,26 +324,41 @@ class ContinuousWorldEnv(gym.Env):
 
         # First we draw the target
         for target in self._targets:
-            corner = np.array(target)[:2]
+            size = target[2:] - target[:2]
             pygame.draw.rect(
                 canvas,
                 (255, 255, 0),
-                pygame.Rect(*(corner * unit_square), *(target.shape * unit_square))
+                pygame.Rect(*(target[:2] * unit_square), *(size * unit_square))
             )
         # Then the obstacles
         for obstacle in self._obstacles:
-            corner = np.array(obstacle)[:2]
+            size = obstacle[2:] - obstacle[:2]
             pygame.draw.rect(
                 canvas,
                 (0, 0, 0),
-                pygame.Rect(*(corner * unit_square), *(obstacle.shape * unit_square))
+                pygame.Rect(*(obstacle[:2] * unit_square), *(size * unit_square))
             )
         # Now we draw the agent
-        corner = np.array(self._agent_pos)[:2]
+        agent_topleft = self._agent_pos - np.array([1, 1]) * self._agent_size
         pygame.draw.rect(
             canvas,
             (0, 0, 255),
-            pygame.Rect(*(corner * unit_square), *(self._agent_pos.shape * unit_square))
+            pygame.Rect(
+                *(agent_topleft * unit_square), 
+                *((self._agent_size * 2, self._agent_size * 2) * unit_square)
+            )
+        )
+
+        # Draw a bounding box around the agent's viewpoint
+        view_topleft = self._agent_pos - np.array([1, 1]) * self.view_size
+        pygame.draw.rect(
+            canvas,
+            (0, 255, 128),
+            pygame.Rect(
+                *(view_topleft * unit_square), 
+                *((self.view_size * 2, self.view_size * 2) * unit_square)
+            ),
+            5
         )
 
         if self.render_mode == "human":
