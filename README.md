@@ -22,7 +22,7 @@ pip install -r requirements.txt
 ## Verify Installation
 
 ```bash
-python -c "import gymnasium as gym; import torch; print('✅ Setup complete!')"
+python3 -c "import gymnasium as gym; import torch; print('✅ Setup complete!')"
 ```
 
 ## Usage
