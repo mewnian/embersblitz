@@ -52,13 +52,13 @@ def train_dqn():
     # Parameters
     input_size = 4  # state dimensions (agent_x, agent_y, target_x, target_y)
     output_size = 8  # number of actions (UP, RIGHT, DOWN, LEFT)
-    learning_rate = 0.001
+    learning_rate = 1e-4
     gamma = 0.99
     epsilon_start = 1.0
     epsilon_end = 0.01
-    epsilon_decay = 0.98
-    batch_size = 32
-    buffer_size = 10000
+    epsilon_decay = 0.997
+    batch_size = 64
+    buffer_size = 50000
     
     # Initialize DQN and target network
     policy_net = DQN(input_size, output_size)
@@ -74,7 +74,7 @@ def train_dqn():
     step_penalty = 0.0  # Small penalty for each step
 
     
-    for episode in range(100):
+    for episode in range(1000):
         state_dict, _ = env.reset()
         state = np.concatenate([
             state_dict['agent'].astype(np.float32), 
@@ -146,7 +146,7 @@ def train_dqn():
         epsilon = max(epsilon_end, epsilon * epsilon_decay)
         
         episode_rewards.append(episode_reward)
-        if episode % 10 == 0:
+        if episode % 50 == 0:
             print(f"Episode {episode}, Average Reward: {np.mean(episode_rewards[-100:]):.2f}")
             print(f"Epsilon: {epsilon:.3f}")
 
