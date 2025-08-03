@@ -74,7 +74,7 @@ def train_dqn():
     step_penalty = 0.0  # Small penalty for each step
 
     
-    for episode in range(1000):
+    for episode in range(2000): #number of episodes
         state_dict, _ = env.reset()
         state = np.concatenate([
             state_dict['agent'].astype(np.float32), 
@@ -89,9 +89,9 @@ def train_dqn():
             else:
                 with torch.no_grad():
                     state_tensor = torch.FloatTensor(state).unsqueeze(0)  # shape (1,4)
-                    with torch.no_grad():
-                        q_values = policy_net(state_tensor)  # (1,8)
-                        action = q_values.argmax(dim=1).item()
+                    q_values = policy_net(state_tensor)  # (1,8)
+                    action = q_values.argmax(dim=1).item()
+                
             
             # Take action
             next_state_dict, reward, terminated, truncated, _ = env.step(action)
@@ -110,7 +110,10 @@ def train_dqn():
             replay_buffer.push(state, action, reward, next_state, done)
             
             # Train if enough samples
-            if len(replay_buffer) >= batch_size:
+            min_replay_size = 2000
+
+            #if len(replay_buffer) >= max(batch_size, min_replay_size):
+            if len(replay_buffer) >= min_replay_size:
                 batch = replay_buffer.sample(batch_size)
                 # Convert batch of tuples to separate lists and then to numpy arrays
                 states, actions, rewards, next_states, dones = map(np.array, zip(*batch))
@@ -132,6 +135,10 @@ def train_dqn():
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+
+                tau = 0.005
+                for p, t in zip(policy_net.parameters(), target_net.parameters()):
+                    t.data.copy_(tau * p.data + (1 - tau) * t.data)
             
             if done:
                 break
@@ -139,8 +146,8 @@ def train_dqn():
             state = next_state
         
         # Update target network periodically
-        if episode % 10 == 0:
-            target_net.load_state_dict(policy_net.state_dict())
+        #if episode % 10 == 0:
+            #target_net.load_state_dict(policy_net.state_dict())
         
         # Decay epsilon
         epsilon = max(epsilon_end, epsilon * epsilon_decay)
