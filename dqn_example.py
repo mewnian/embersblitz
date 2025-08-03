@@ -10,6 +10,10 @@ import embers_env.envs
 
 from embers_env.envs.discrete_world import DiscreteWorldEnv
 
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+
 class DQN(nn.Module):
     def __init__(self, input_size, output_size):
         super(DQN, self).__init__()
@@ -37,6 +41,36 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.buffer)
 
+
+
+
+def evaluate_policy(policy_net, env, num_episodes=20, max_steps_per_episode=200):
+    successes = 0
+    total_steps = 0
+    for _ in range(num_episodes):
+        state_dict, _ = env.reset()
+        state = np.concatenate([state_dict['agent'], state_dict['exit']]).astype(np.float32)
+        done = False
+        steps = 0
+        terminated = False  # ensure defined
+        while not done and steps < max_steps_per_episode:
+            with torch.no_grad():
+                st = torch.as_tensor(state, dtype=torch.float32).unsqueeze(0)
+                action = policy_net(st).argmax(dim=1).item()
+            next_state_dict, reward, terminated, truncated, _ = env.step(action)
+            next_state = np.concatenate([next_state_dict['agent'], next_state_dict['exit']]).astype(np.float32)
+            done = terminated or truncated
+            state = next_state
+            steps += 1
+        if terminated:
+            successes += 1
+        total_steps += steps
+    success_rate = successes / num_episodes
+    avg_steps = total_steps / num_episodes
+    return success_rate, avg_steps
+
+
+
 def train_dqn():
     # Environment setup
 
@@ -46,7 +80,11 @@ def train_dqn():
     env = DiscreteWorldEnv(width=10, height=10, render_mode="rgb_array")
 
     
-    
+    # implementing success rate tracking
+    from collections import deque
+
+    success_history = deque(maxlen=100)  # last 100 episodes
+
 
     
     # Parameters
@@ -71,7 +109,7 @@ def train_dqn():
     epsilon = epsilon_start
     episode_rewards = []
 
-    step_penalty = 0.0  # Small penalty for each step
+    step_penalty = 0.001  # Small penalty for each step
 
     
     for episode in range(2000): #number of episodes
@@ -82,6 +120,7 @@ def train_dqn():
         ])
         episode_reward = 0
         
+        min_replay_size = 2000
         while True:
             # Epsilon-greedy action selection
             if random.random() < epsilon:
@@ -98,7 +137,7 @@ def train_dqn():
             reward = reward - step_penalty
 
 
-            env.render()  # This will show the current state
+            #env.render()  # This will show the current state
             next_state = np.concatenate([
                 next_state_dict['agent'].astype(np.float32),
                 next_state_dict['exit'].astype(np.float32)
@@ -110,26 +149,27 @@ def train_dqn():
             replay_buffer.push(state, action, reward, next_state, done)
             
             # Train if enough samples
-            min_replay_size = 2000
+            #print("1")
 
             #if len(replay_buffer) >= max(batch_size, min_replay_size):
             if len(replay_buffer) >= min_replay_size:
                 batch = replay_buffer.sample(batch_size)
                 # Convert batch of tuples to separate lists and then to numpy arrays
                 states, actions, rewards, next_states, dones = map(np.array, zip(*batch))
-                
+                #print("1.5")
                 # Convert numpy arrays to tensors efficiently
-                states = torch.FloatTensor(states)
-                actions = torch.LongTensor(actions)
-                rewards = torch.FloatTensor(rewards)
-                next_states = torch.FloatTensor(next_states)
-                dones = torch.FloatTensor(dones)
+                states = torch.from_numpy(states).to(device).float()
+                actions = torch.from_numpy(actions).to(device).long()
+                rewards = torch.from_numpy(rewards).to(device).float()
+                next_states = torch.from_numpy(next_states).to(device).float()
+                dones = torch.from_numpy(dones).to(device).float()
+
                 
                 # Compute Q values
                 current_q = policy_net(states).gather(1, actions.unsqueeze(1))
                 next_q = target_net(next_states).max(1)[0].detach()
                 target_q = rewards + gamma * next_q * (1 - dones)
-                
+                #print("2")
                 # Compute loss and update
                 loss = nn.MSELoss()(current_q.squeeze(), target_q)
                 optimizer.zero_grad()
@@ -142,22 +182,53 @@ def train_dqn():
             
             if done:
                 break
-                
+            #print("1.2")
             state = next_state
+
+
+
+        # Determine if this episode succeeded (terminated, not just truncated)
+        success = terminated  # since done = terminated or truncated, use terminated specifically
+        success_history.append(1 if success else 0)
+
+        #print("1.3")
+        episode_rewards.append(episode_reward)
+        # Logging (example every 50 episodes)
+        if episode % 50 == 0:
+            avg_reward = np.mean(episode_rewards[-100:])
+            success_rate = sum(success_history) / len(success_history) if success_history else 0.0
+            print(f"Episode {episode}, Avg Reward: {avg_reward:.2f}, Success Rate (last 100): {success_rate:.2%}")
+            print(f"Epsilon: {epsilon:.3f}")
+
+
+
         
         # Update target network periodically
         #if episode % 10 == 0:
             #target_net.load_state_dict(policy_net.state_dict())
         
+        #print("1.4")
         # Decay epsilon
         epsilon = max(epsilon_end, epsilon * epsilon_decay)
         
-        episode_rewards.append(episode_reward)
+        '''
         if episode % 50 == 0:
             print(f"Episode {episode}, Average Reward: {np.mean(episode_rewards[-100:]):.2f}")
             print(f"Epsilon: {epsilon:.3f}")
+        '''
+        
+        #print("1.7")
+        if episode % 50 == 0:
+            #print("1.75")
+            sr, avg_len = evaluate_policy(policy_net, env, num_episodes=20)
+            #print("1.755")
+            print(f"[Eval] Greedy success rate: {sr:.2%}, avg steps: {avg_len:.1f}")
+        #print("1.8")
+    
 
     env.close()
+
+
 
 if __name__ == "__main__":
     train_dqn()
