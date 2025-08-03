@@ -6,6 +6,9 @@ import torch.optim as optim
 from collections import deque
 import random
 import discrete_env
+import embers_env.envs
+
+from embers_env.envs.discrete_world import DiscreteWorldEnv
 
 class DQN(nn.Module):
     def __init__(self, input_size, output_size):
@@ -36,14 +39,19 @@ class ReplayBuffer:
 
 def train_dqn():
     # Environment setup
-    env = gym.make('discrete_env/GridWorld-v0', 
-                   size=(10, 10),
-                   render_mode="rgb_array") # "None" or "rgb_array" or "human"
+
+    # replace gym.make(...) with direct instantiation:
+   
+
+    env = DiscreteWorldEnv(width=10, height=10, render_mode="rgb_array")
+
+    
+    
 
     
     # Parameters
     input_size = 4  # state dimensions (agent_x, agent_y, target_x, target_y)
-    output_size = 4  # number of actions (UP, RIGHT, DOWN, LEFT)
+    output_size = 8  # number of actions (UP, RIGHT, DOWN, LEFT)
     learning_rate = 0.001
     gamma = 0.99
     epsilon_start = 1.0
@@ -63,14 +71,14 @@ def train_dqn():
     epsilon = epsilon_start
     episode_rewards = []
 
-    step_penalty = 0.001  # Small penalty for each step
+    step_penalty = 0.0  # Small penalty for each step
 
     
     for episode in range(100):
         state_dict, _ = env.reset()
         state = np.concatenate([
             state_dict['agent'].astype(np.float32), 
-            state_dict['target'].astype(np.float32)
+            state_dict['exit'].astype(np.float32)
         ])
         episode_reward = 0
         
@@ -80,9 +88,10 @@ def train_dqn():
                 action = env.action_space.sample()
             else:
                 with torch.no_grad():
-                    state_tensor = torch.FloatTensor(state)
-                    q_values = policy_net(state_tensor)
-                    action = q_values.argmax().item()
+                    state_tensor = torch.FloatTensor(state).unsqueeze(0)  # shape (1,4)
+                    with torch.no_grad():
+                        q_values = policy_net(state_tensor)  # (1,8)
+                        action = q_values.argmax(dim=1).item()
             
             # Take action
             next_state_dict, reward, terminated, truncated, _ = env.step(action)
@@ -92,7 +101,7 @@ def train_dqn():
             env.render()  # This will show the current state
             next_state = np.concatenate([
                 next_state_dict['agent'].astype(np.float32),
-                next_state_dict['target'].astype(np.float32)
+                next_state_dict['exit'].astype(np.float32)
             ])
             done = terminated or truncated
             episode_reward += reward
