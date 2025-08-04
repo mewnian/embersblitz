@@ -82,17 +82,63 @@ def train_dqn():
     #env = UnifiedEnvWrapper(base_env, env_type="discrete", grid_size=10)
 
 
+    # define geometry
+    targets = [
+        (0, 920, 1000, 1000),
+    ]
+
+    obstacles = [
+        (45, 880, 95, 940), # pillar one
+        (60, 250, 80, 880),
+        (45, 190, 95, 250),
+        (765, 880, 815, 940), # pillar two
+        (780, 250, 800, 880),
+        (765, 190, 815, 250),
+        (95, 190, 765, 215), # wall
+        (0, 190, 45, 215),
+        (765, 190, 1000, 215),
+        (420, 215, 440, 915),
+        (195, 915, 665, 935),
+        (0, 915, 45, 935),
+        (815, 915, 1000, 935),
+        (215, 730, 420, 740),
+        (215, 835, 225, 915),
+        (440, 730, 645, 740),
+        (635, 835, 645, 915),
+        (215, 300, 420, 395), # furniture
+        (440, 300, 645, 395),
+        (380, 395, 420, 455),
+        (440, 395, 480, 455),
+        (215, 455, 420, 550),
+        (440, 455, 645, 550),
+        (80, 265, 120, 525),
+        (740, 265, 780, 525),
+    ]
+
     # Continuous
-    base_env = ContinuousWorldEnv(width=600, height=400, render_mode="rgb_array", episode_step_limit=400)
-    xmin, ymin = 300 - 25, 200 - 25
-    xmax, ymax = 300 + 25, 200 + 25
-    base_env.add_target((xmin, ymin, xmax, ymax))
-    env = UnifiedEnvWrapper(base_env, env_type="continuous", grid_size=600)  # grid_size is used for normalization scale
+    base_env = ContinuousWorldEnv(width=1000, height=1000, render_mode="rgb_array", episode_step_limit=400)
+    #xmin, ymin = 300 - 25, 200 - 25
+    #xmax, ymax = 300 + 25, 200 + 25
+    #base_env.add_target((xmin, ymin, xmax, ymax))
+    # add target(s)
+    for t in targets:
+        base_env.add_target(t)
+
+    # add obstacles
+    for o in obstacles:
+        base_env.add_obstacle(o)
+    env = UnifiedEnvWrapper(base_env, env_type="continuous", grid_size=1000)  # grid_size is used for normalization scale
 
     # Separate evaluation env (no rendering to keep it fast)
-    eval_base = ContinuousWorldEnv(width=600, height=400, render_mode="rgb_array", episode_step_limit=400)
-    eval_base.add_target((275, 175, 325, 225))  # same target setup for consistency
-    eval_env = UnifiedEnvWrapper(eval_base, env_type="continuous", grid_size=600)
+    eval_base = ContinuousWorldEnv(width=1000, height=1000, render_mode="rgb_array", episode_step_limit=400)
+    # add target(s)
+    for t in targets:
+        eval_base.add_target(t)
+
+    # add obstacles
+    for o in obstacles:
+        eval_base.add_obstacle(o)
+    eval_env = UnifiedEnvWrapper(eval_base, env_type="continuous", grid_size=1000)
 
     
     # implementing success rate tracking
@@ -100,6 +146,8 @@ def train_dqn():
 
     success_history = deque(maxlen=100)  # last 100 episodes
 
+    episode_rewards = []
+    avg_q_values_per_episode = []
 
     
     # Parameters
@@ -125,7 +173,7 @@ def train_dqn():
     replay_buffer = ReplayBuffer(buffer_size)
     
     epsilon = epsilon_start
-    episode_rewards = []
+    #episode_rewards = []
 
     step_penalty = 0.001  # Small penalty for each step
 
@@ -179,28 +227,24 @@ def train_dqn():
                 dones = torch.from_numpy(dones).to(device).float()
 
                 
-                # Compute Q values
-                current_q = policy_net(states).gather(1, actions.unsqueeze(1))
-                next_q = target_net(next_states).max(1)[0].detach()
-                target_q = rewards + gamma * next_q * (1 - dones)
-                #print("2")
-                # Compute loss and update
-                loss = nn.MSELoss()(current_q.squeeze(), target_q)
-                optimizer.zero_grad()
-                loss.backward()
-
+                # --- compute current and target Q ---
+                current_q = policy_net(states).gather(1, actions.unsqueeze(1)).squeeze(1)  # [B]
                 with torch.no_grad():
-                    next_actions = policy_net(next_states).argmax(1, keepdim=True)
-                    next_q = target_net(next_states).gather(1, next_actions).squeeze(1)
-                target_q = rewards + gamma * next_q * (1 - dones)
+                    next_q = target_net(next_states).max(1)[0]  # [B]
+                    target_q = rewards + gamma * next_q * (1 - dones)  # Bellman target
 
-                current_q = policy_net(states).gather(1, actions.unsqueeze(1))
-
-                loss = nn.MSELoss()(current_q.squeeze(), target_q)
+                # --- loss and optimization ---
+                loss = nn.MSELoss()(current_q, target_q)
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(policy_net.parameters(), 1.0)
                 optimizer.step()
+
+                # --- soft update target network ---
+                tau = 0.005  # keep this consistent with your existing code
+                for p, t in zip(policy_net.parameters(), target_net.parameters()):
+                    t.data.copy_(tau * p.data + (1 - tau) * t.data)
+
 
                 
                 optimizer.step()
@@ -213,6 +257,31 @@ def train_dqn():
                 break
             #print("1.2")
             state = next_state
+
+
+        # after episode is done
+        episode_rewards.append(episode_reward)
+
+        # compute average Q-value if enough in buffer
+        avg_q = None
+        if len(replay_buffer) >= batch_size:
+            batch = replay_buffer.sample(batch_size)
+            states, actions, rewards, next_states, dones = map(np.array, zip(*batch))
+            states_tensor = torch.from_numpy(states).to(device).float()
+            with torch.no_grad():
+                # max over actions per state
+                q_vals = policy_net(states_tensor)  # shape [B, A]
+                max_q, _ = q_vals.max(1)           # shape [B]
+                avg_q = max_q.mean().item()
+        else:
+            # fallback: current state value estimate
+            with torch.no_grad():
+                st = torch.as_tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
+                q_vals = policy_net(st)
+                max_q = q_vals.max(1)[0]
+                avg_q = max_q.item()
+        avg_q_values_per_episode.append(avg_q)
+
 
 
 
@@ -246,9 +315,9 @@ def train_dqn():
             print(f"Epsilon: {epsilon:.3f}")
         '''
         
-        
-        if episode % 100 == 0: 
-            visualize_episode(policy_net, eval_env)
+        #viz
+        #if episode % 100 == 0: 
+            #visualize_episode(policy_net, eval_env)
 
 
         if episode % 50 == 0:
@@ -258,6 +327,15 @@ def train_dqn():
             sr, avg_len = evaluate_policy(policy_net, eval_env, num_episodes=20)
             policy_net.train()
             print(f"[Eval] Greedy success rate: {sr:.2%}, avg steps: {avg_len:.1f}")
+
+        if episode % 50 == 0:
+            avg_reward = np.mean(episode_rewards[-100:])
+            success_rate = sum(success_history) / len(success_history) if success_history else 0.0
+            print(f"Episode {episode}, Avg Reward: {avg_reward:.2f}, Success Rate (last 100): {success_rate:.2%}, Avg Q: {avg_q_values_per_episode[-1]:.3f}")
+            if episode % 200 == 0: 
+                plot_metrics(episode_rewards, avg_q_values_per_episode, smooth_window=20)
+
+
     
 
     env.close()
@@ -320,6 +398,38 @@ def visualize_episode(policy_net, env, max_steps=400):
     ax.set_title("Agent trajectory (last frame background)")
     plt.show()
     policy_net.train()
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+def smooth(x, window=10):
+    if len(x) < window:
+        return np.array(x)
+    return np.convolve(x, np.ones(window)/window, mode="valid")
+
+def plot_metrics(reward_history, q_history, smooth_window=10):
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+
+    axes[0].plot(reward_history, label="raw")
+    if len(reward_history) >= smooth_window:
+        axes[0].plot(range(smooth_window-1, len(reward_history)), smooth(reward_history, smooth_window), label=f"smoothed({smooth_window})")
+    axes[0].set_title("Average reward by episode")
+    axes[0].set_xlabel("Episode")
+    axes[0].set_ylabel("Reward")
+    axes[0].legend()
+    axes[0].grid(True)
+
+    axes[1].plot(q_history, label="raw")
+    if len(q_history) >= smooth_window:
+        axes[1].plot(range(smooth_window-1, len(q_history)), smooth(q_history, smooth_window), label=f"smoothed({smooth_window})")
+    axes[1].set_title("Average Q-value by episode")
+    axes[1].set_xlabel("Episode")
+    axes[1].set_ylabel("Q-value")
+    axes[1].legend()
+    axes[1].grid(True)
+
+    plt.tight_layout()
+    plt.show()
 
 
 if __name__ == "__main__":
