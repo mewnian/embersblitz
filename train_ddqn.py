@@ -124,4 +124,4 @@ def train_ddqn(
             print(f"Episode {ep}, Reward: {episode_reward:.2f}, Epsilon: {epsilon:.3f}")
 
 if __name__ == "__main__":
-    train_ddqn("YourContinuousGymEnv-v0")
+    train_ddqn()
