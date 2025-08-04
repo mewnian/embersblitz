@@ -319,11 +319,11 @@ class ContinuousWorldEnv(gym.Env):
         elif action == 1: # Turns left by 15 degrees
             self._agent_angle = (self._agent_angle + 15) % 360
             self._agent_direction = np.array([np.cos(np.pi * self._agent_angle / 180.0), np.sin(np.pi * self._agent_angle / 180.0)])
-            reward = -1
+            reward = -0.00001
         elif action == 2: # Turns right by 15 degrees
             self._agent_angle = (self._agent_angle + 360 - 15) % 360
             self._agent_direction = np.array([np.cos(np.pi * self._agent_angle / 180.0), np.sin(np.pi * self._agent_angle / 180.0)])
-            reward = -1
+            reward = -0.00001
         # clip the agent's position to stay within bounds
         # check if agent reaches the target
         terminated = terminated or self.is_overlapping_with_target(self._agent_pos)
