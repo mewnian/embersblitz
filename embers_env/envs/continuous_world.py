@@ -267,6 +267,7 @@ class ContinuousWorldEnv(gym.Env):
         super().reset(seed=seed)
 
         # Randomly place agent
+        self._agent_pos = None
         if self._agent_pos is None:
             while True:
                 # Ensure agent is not overlapping with target or obstacles
@@ -308,7 +309,7 @@ class ContinuousWorldEnv(gym.Env):
                 old_distance = self.distance_to_nearest_target(self._agent_pos)
                 self._agent_pos.set_center(new_center)
                 new_distance = self.distance_to_nearest_target(self._agent_pos)
-                reward = (old_distance - new_distance) / (self.width + self.height)  # Reward for moving closer to target
+                reward = 10 * (old_distance - new_distance) / (self.width + self.height)  # Reward for moving closer to target
             else:
                 # resolve collision by sliding along walls and punish
                 # new_center = self._resolve_collision(self._agent_pos.center, self._agent_direction)
