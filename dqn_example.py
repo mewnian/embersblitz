@@ -316,8 +316,9 @@ def train_dqn():
         '''
         
         #viz
-        #if episode % 100 == 0: 
-            #visualize_episode(policy_net, eval_env)
+        if episode > 200 & success: 
+            visualize_episode(policy_net, eval_env)
+            #plot_metrics(episode_rewards, avg_q_values_per_episode, smooth_window=20)
 
 
         if episode % 50 == 0:
@@ -332,8 +333,8 @@ def train_dqn():
             avg_reward = np.mean(episode_rewards[-100:])
             success_rate = sum(success_history) / len(success_history) if success_history else 0.0
             print(f"Episode {episode}, Avg Reward: {avg_reward:.2f}, Success Rate (last 100): {success_rate:.2%}, Avg Q: {avg_q_values_per_episode[-1]:.3f}")
-            if episode % 200 == 0: 
-                plot_metrics(episode_rewards, avg_q_values_per_episode, smooth_window=20)
+            #if episode % 200 == 0: 
+                #plot_metrics(episode_rewards, avg_q_values_per_episode, smooth_window=20)
 
 
     
