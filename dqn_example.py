@@ -7,6 +7,7 @@ from collections import deque
 import random
 import discrete_env
 import embers_env.envs
+import math
 
 from UnifiedEnvWrapper import UnifiedEnvWrapper  # assume you saved the earlier code as unified_wrapper.py
 from embers_env.envs.discrete_world import DiscreteWorldEnv
@@ -17,18 +18,43 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 class DQN(nn.Module):
-    def __init__(self, input_size, output_size):
-        super(DQN, self).__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_size, 64),
-            nn.ReLU(),
-            nn.Linear(64, 64),
-            nn.ReLU(),
-            nn.Linear(64, output_size)
-        )
+    def __init__(
+        self,
+        input_size: int,
+        output_size: int,
+        hidden_sizes=(64, 64),
+        activation=nn.ReLU,
+        use_layernorm: bool = False
+    ):
+        super().__init__()
+        layers = []
+        in_features = input_size
 
-    def forward(self, x):
-        return self.network(x)
+        for h in hidden_sizes:
+            layers.append(nn.Linear(in_features, h))
+            if use_layernorm:
+                layers.append(nn.LayerNorm(h))
+            layers.append(activation(inplace=True) if 'inplace' in activation.__init__.__code__.co_varnames else activation())
+            in_features = h
+
+        layers.append(nn.Linear(in_features, output_size))
+        self.network = nn.Sequential(*layers)
+
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        # Orthogonal init tends to work nicely for MLPs with ReLU
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, gain=nn.init.calculate_gain('relu'))
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Make sure we see [batch, feat]; cast to float for safety
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+        return self.network(x.float().contiguous())
 
 class ReplayBuffer:
     def __init__(self, capacity):
@@ -316,9 +342,10 @@ def train_dqn():
         '''
         
         #viz
-        if episode > 200 & success: 
-            visualize_episode(policy_net, eval_env)
+        if episode > 1000 and success and episode % 50 == 0: 
+            #visualize_episode(policy_net, eval_env)
             #plot_metrics(episode_rewards, avg_q_values_per_episode, smooth_window=20)
+            print("")
 
 
         if episode % 50 == 0:
@@ -333,8 +360,8 @@ def train_dqn():
             avg_reward = np.mean(episode_rewards[-100:])
             success_rate = sum(success_history) / len(success_history) if success_history else 0.0
             print(f"Episode {episode}, Avg Reward: {avg_reward:.2f}, Success Rate (last 100): {success_rate:.2%}, Avg Q: {avg_q_values_per_episode[-1]:.3f}")
-            #if episode % 200 == 0: 
-                #plot_metrics(episode_rewards, avg_q_values_per_episode, smooth_window=20)
+            if episode % 250 == 0 or episode == 1950: 
+                plot_metrics(episode_rewards, avg_q_values_per_episode, smooth_window=20)
 
 
     
